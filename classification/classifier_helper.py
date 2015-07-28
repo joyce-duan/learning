@@ -1,3 +1,9 @@
+'''
+    pd.set_option('max_colwidth',500)
+    sys.stdout.flush()
+
+'''
+
 import sys
 import numpy as np
 import pandas as pd
@@ -5,11 +11,6 @@ import scipy as sp
 from scipy.sparse import isspmatrix
 import matplotlib.pyplot as plt
 
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem.porter import PorterStemmer
-from nltk.stem.snowball import SnowballStemmer
-from nltk.stem.wordnet import WordNetLemmatizer
 
 from sklearn.pipeline import Pipeline
 from sklearn.grid_search import GridSearchCV
@@ -24,6 +25,7 @@ from sklearn.preprocessing import StandardScaler
 
 from sklearn.feature_selection import SelectKBest
 from sklearn.feature_selection import chi2
+
 from sklearn import linear_model
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
@@ -36,7 +38,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 
-from sklearn.metrics import roc_curve, auc, classification_report
+from sklearn.metrics import roc_curve, classification_report, roc_auc_score
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 from sklearn.metrics import f1_score
 from sklearn.metrics import confusion_matrix
@@ -49,6 +51,9 @@ import random
 
 import pprint
 import logging
+
+from model_evaluation.grid_search import score_grid_search
+
 # Display progress logs on stdout
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
@@ -56,9 +61,7 @@ logging.basicConfig(level=logging.INFO,
 
 class ClassifierTestor(object):
     '''
-    run all typical models using default setting and find the best 3
-    Precondition:
-        X, y
+    run all typical models using default setting and find the best k 
     '''
     metric_names = [
      'accuracy'
@@ -67,26 +70,42 @@ class ClassifierTestor(object):
     ,'f1'
     ]
 
-    def __init__ (self, estimators = None):
-        if estimators == None:
-            self.estimators = {
-            'LogisticRegression':linear_model.LogisticRegression()
+    dict_estimator = {
+            'LogisticRegression':linear_model.LogisticRegression()            
+            , 'SGDClassifier': linear_model.SGDClassifier( )  # default 'hinge' svm,
+            , 'SGDC_lr': linear_model.SGDClassifier(loss='log') #  'log' logistic regression
             , 'MultinomialNB':MultinomialNB()
             , 'SVC':SVC()
-            , 'RF':RandomForestClassifier()
-            , 'AdaBoostClassifier':AdaBoostClassifier() 
-            , 'KNN':KNeighborsClassifier(5)
+            , 'RF':RandomForestClassifier( ) # n_estimators=500)
+            , 'AdaBoostClassifier':AdaBoostClassifier(  ) # n_estimators=500, learning_rate=0.1) 
+            , 'KNN':KNeighborsClassifier(11)
             ,'SVC_linear':SVC(kernel="linear", C=1)
             ,'SVC_rbf':SVC( kernel='rbf')
             , 'GaussianNB':GaussianNB()
-            , 'GBC':GradientBoostingClassifier() 
+            , 'GBC':GradientBoostingClassifier( ) # n_estimators = 500, learning_rate = 0.02) 
             ,'LDA':LDA()
             ,'QDA':QDA()
             }
+
+    def __init__ (self, estimators = [], scoring = 'accuracy'):
+        '''
+        INPUT:
+            estimators: a list of names or a dictonary
+            scoring: 'accuracy', 'roc_auc'
+        '''
+        self.scoring = scoring
+        if  not estimators:
+            self.estimators = ClassifierTestor.dict_estimator 
+        elif type(estimators) == list:
+            self.estimators = dict([(k, ClassifierTestor.dict_estimator[k]) for k in estimators])
         else:
             self.estimators = estimators
+        if self.scoring == 'roc_auc':
+            self.metric_names = [self.scoring] 
+        else:
+            self.metric_names = ClassifierTestor.metric_names
 
-    def __reorder(self, names):
+    def _reorder(self, names):
         slow_methods = [ 'SVC_rbf', 'SVC', 'GBC']
         m_to_add = []
         for s in slow_methods:
@@ -97,14 +116,63 @@ class ClassifierTestor(object):
         names.extend(m_to_add)
         return names
 
-    def fit(self, train_X, test_X, train_y, test_y):
+    def fit_predict_proba(self, train_X, test_X, train_y, test_y):
+        #self.fit(train_X, train_y)
+        estimator_names = self.estimators.keys()
+        estimator_names = self._reorder(estimator_names)
+        self.estimator_names = estimator_names
+
+        print estimator_names
+        print ', '.join(self.metric_names)       
+
+        metrics_all = []
+        #for k, estimator in self.estimators.iteritems():
+
+        if isspmatrix(train_X):
+            test_X_full = test_X.todense()
+            train_X_full = train_X.todense()
+        else:
+            test_X_full = test_X
+            train_X_full = train_X
+
+        for k in estimator_names:
+            estimator = self.estimators[k]
+            print '\n%s' % (k)
+            t0 = time.time()            
+            try:
+                if k in ['GaussianNB','GBC', 'LDA', 'QDA']:
+                    train_X_f = train_X_full
+                    test_X_f = test_X_full
+                else:
+                    train_X_f = train_X
+                    test_X_f = test_X
+                self.estimators[k]  = estimator.fit(train_X_f, train_y)
+                test_y_pred_prob = estimator.predict_proba(test_X_f)
+
+                #metrics = [accuracy_score(test_y, test_y_pred) 
+                #,precision_score(test_y, test_y_pred) #, average='binary')
+                #, recall_score(test_y, test_y_pred)
+                #, f1_score(test_y, test_y_pred)]
+                metrics = [roc_auc_score(test_y, test_y_pred_prob[:,1])]
+                str_metrics = ['%.3f' % (m) for m in metrics]
+                print '%s %s'  %(k, str_metrics)
+            except:
+                print 'errror in model %s'  % (k)
+                metrics = [np.nan] * len(self.metric_names)
+            t1 = time.time() # time it
+            metrics_all.append([k] + metrics + [(t1-t0)/60])
+            #print "finish in  %4.4fmin for %s " %((t1-t0)/60,k)
+        self.df_score = pd.DataFrame(metrics_all, columns = ['model'] + self.metric_names + ['time'])
+        print "\n"
+
+    def fit_predict(self, train_X, test_X, train_y, test_y):
         '''
         X: feature matrix
         '''
         # convert to full matrix, required for GBC
 
         estimator_names = self.estimators.keys()
-        estimator_names = self.__reorder(estimator_names)
+        estimator_names = self._reorder(estimator_names)
 
         print estimator_names
         print ', '.join(self.metric_names)
@@ -147,50 +215,76 @@ class ClassifierTestor(object):
         self.df_score = pd.DataFrame(metrics_all, columns = ['model'] + self.metric_names + ['time'])
         print "\n"
 
+
     def score(self):
-        self.df_score.sort('accuracy', ascending=False, inplace = True)
+        #self.df_score.sort('accuracy', ascending=False, inplace = True)
+        self.df_score.sort(self.scoring, ascending=False, inplace = True)
         return self.df_score
+
 
 class ClassifierSelector(object):
     '''
-    quick select of classifier hyper-parameter space
-    features: X
+    quick select by testing hyper-parameter space of a few classifier 
     '''
     #   ['svm', 'rf','knn','lr','gbc']
     dict_model  = {'svm': SVC(),
     'rf': RandomForestClassifier()
     ,"knn": KNeighborsClassifier()
     ,'lr': linear_model.LogisticRegression()
+    , 'sgdc': linear_model.SGDClassifier()
     ,'gbc': GradientBoostingClassifier() 
+    ,'adabc': AdaBoostClassifier()
     } 
 
-    dict_params = {'svm':[
-    {'clf__C': [1, 10], 'clf__kernel': ['linear']},
-    {'clf__C': [1, 10]  # default gamma is 0.0 then 1/n_features
-    , 'clf__kernel': ['rbf']},
-    {'clf__kernel': ['poly'], 'clf__degree': [ 2, 3]}
-    ], 
+    dict_params = {
+    'svm':[
+        {'clf__C': [1, 10], 'clf__kernel': ['linear']},
+        {'clf__C': [1, 10]  # default gamma is 0.0 then 1/n_features
+        , 'clf__kernel': ['rbf']},
+        {'clf__kernel': ['poly'], 'clf__degree': [ 2, 3]}
+        ], 
     'rf': [{"clf__n_estimators": [100, 250]}], 
-    'knn': [{"clf__n_neighbors": [ 5, 10]}]
-    , 'lr': [ {'clf__C': [1, 10]} ]
+    'knn': 
+        [{"clf__n_neighbors": [ 5, 10, 20]}]
+    , 'lr': [ {'clf__C': [1, 10, 100]} ]
     , 'gbc': [{'clf__learning_rate': [ 0.1] # default 0.1
-        , 'clf__n_estimators': [100, 300] #default 100
+            , 'clf__n_estimators': [100, 300] #default 100
+            }]
+    ,'sgdc': [{
+        'clf__loss':['log'],'clf__penalty':["elasticnet"]
+        , 'clf__shuffle':[True]
+        ,   'clf__alpha':[0.001, 0.0001, 0.00001]
+        ,  'clf__n_iter':[20]}]
+    ,'adabc':[{
+        'clf__n_estimators': [50, 200, 500] # default 50
+        , 'clf__learning_rate': [0.1, 0.5] #, 1.0]   #default 1.0
         }]
+    , 'gbc': [{
+        'clf__learning_rate': [ 0.1, 0.01] # default 0.1
+        , 'clf__n_estimators': [100, 500] #default 100
+        }]
+    , 'lr': [ {'clf__C': [0.01,  1, 10],  # default: 1.0 inverse regularion strength
+          'clf__class_weight': [None, 'auto'],
+          'clf__tol': [ 1e-3, 1e-4, 1e-5]  # default 1e-4 0.0001
+          }]
     }    
 
-    def __init__(self, model_names, dict_params = {}):
+    def __init__(self, model_names, dict_params = {}, scoring = 'accuracy'):
         if model_names:
             self.models = dict([ (m, self.dict_model[m]) for m in model_names])
         else:
             self.models = self.dict_model 
         if dict_params:
-            self.params = self.dict_params
+            self.params = dict_params
         else:
             self.params = self.dict_params
         self.grid_searches = {}
         self.time_taken = {}
+        self.scoring = scoring
 
-    def fit(self, x_train, y_train, cv=3, scoring=None,  refit=True, n_jobs=-1, verbose=1):
+    def fit(self, x_train, y_train, cv=3, scoring= None,  refit=True, n_jobs=-1, verbose=1):
+        if scoring is None:
+            scoring = self.scoring
         print self.models.keys()
 
         if isspmatrix(x_train):
@@ -204,7 +298,7 @@ class ClassifierSelector(object):
             else:
                 x_train_f = x_train
 
-            print '\n%s' % (model_name)
+            print '\n\n%s' % (model_name)
             print self.params[model_name]
             t0 = time.time()
             pipeline = Pipeline([
@@ -220,7 +314,10 @@ class ClassifierSelector(object):
             self.time_taken[model_name] = (t1-t0)/60
         print 
 
-    def score(self):
+    def score(self, sortby=['mean']):
+        '''
+        score of all the grid search results model, name
+        '''
         lst_score = []
         for model_name, gs in  self.grid_searches.iteritems():
              gs_scores = gs.grid_scores_
@@ -229,7 +326,7 @@ class ClassifierSelector(object):
                 params =   grid_score.parameters
                 lst_score.append([model_name, np.mean(scores), min(scores), max(scores), np.std(scores), params, self.time_taken[model_name]] )
         self.df_score = pd.DataFrame(lst_score, columns=['model','mean','min','max','std', 'param','minutes'])  
-        self.df_score.sort('mean', inplace=True, ascending=False)
+        self.df_score.sort(sortby + ['mean'], inplace=True, ascending=False)
         return self.df_score 
 
     def score_predict(self, x_test, y_test):
@@ -247,8 +344,15 @@ class ClassifierSelector(object):
         for model_name, gs in  self.grid_searches.iteritems():
             estimator = gs.best_estimator_
             #print estimator
-            test_y_pred = estimator.predict(x_test_f)
-            a = accuracy_score(y_test, test_y_pred)
+            if self.scoring == 'roc_auc':            
+                test_y_pred_proba = estimator.predict_proba(x_test_f)
+                a = roc_auc_score(y_test, test_y_pred_proba)
+            elif self.scoring == 'accuracy':
+                test_y_pred = estimator.predict(x_test_f)
+                a = accuracy_score(y_test, test_y_pred)  
+            else:
+                print 'ERROR: scoring method not defined %s' % (self.scoring)             
+
             l.append([model_name, a])
         #print l
         return l
@@ -258,10 +362,11 @@ class ClassifierOptimizer(object):
     hyper parameter search for 1 classifier
     feature: can be text if added pipeline steps
     '''
-    dict_model  = {'svm': SVC(),
-    'rf': RandomForestClassifier(),
-    "knn": KNeighborsClassifier(),
-    'lr': linear_model.LogisticRegression()
+    dict_model  = {'svm': SVC()
+    ,'rf': RandomForestClassifier()
+    ,"knn": KNeighborsClassifier()
+    ,'lr': linear_model.LogisticRegression()
+    , 'sgdc': linear_model.SGDClassifier()
     ,'gbc': GradientBoostingClassifier() 
     } # <== change here
     # pipeline parameters to automatically explore and tune
@@ -283,13 +388,18 @@ class ClassifierOptimizer(object):
         , 'clf__max_features': [1.0, 0.3] #default None 1.0
         , 'clf__n_estimators': [300] #default 100
         }]
+    , 'sgdc':[{'clf__loss':['log'],'clf__penalty':["elasticnet"]
+        , 'clf__shuffle':[True]
+        , 'clf__alpha':[0.001, 0.0001, 0.00001]
+        ,  'clf__n_iter':[20,200]}]
     }    
 
     #dict_params = {'svm':{'classifier__C': [1, 10, 100, 1000], 'classifier__kernel': ['linear']}}
     def __init__(self, clfname):
         self.clfname= clfname
-        self.params = self.dict_params[self.clfname]
-        self.clf_func = self.dict_model[self.clfname]
+        print ClassifierOptimizer.dict_params
+        self.params = ClassifierOptimizer.dict_params[self.clfname]
+        self.clf_func = ClassifierOptimizer.dict_model[self.clfname]
         self.parameters = None
         self.pipeline = None
 
@@ -307,7 +417,6 @@ class ClassifierOptimizer(object):
         ('chi2', SelectKBest(chi2)),
         ('clf', self.get_clf())
         ])   
-
         par_chi2 = {'chi2__k': [800, 1000, 1200, 1400, 1600, 1800, 2000]}
         '''
         self.pipeline = Pipeline(
@@ -359,6 +468,10 @@ class ClassifierOptimizer(object):
         t1 = time.time() # time it
         print "finish in  %4.4fmin for %s " %((t1-t0)/60,'optimize')
         return self.grid_search
+
+    def get_score_cv(self):
+        self.df_score = score_grid_search(self.grid_search)
+        return self.df_score
 
     def score_predict(self, test_txt, test_y):
         estimator = self.grid_search.best_estimator_
