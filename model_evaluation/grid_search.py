@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
-def score_grid_search(grid_search):
+#def score_grid_search(grid_search):
+def get_grid_search_score_df(grid_search):
 	lst_score = []
 	gs_scores = grid_search.grid_scores_
 	for grid_score in gs_scores:

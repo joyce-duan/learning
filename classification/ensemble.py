@@ -41,7 +41,7 @@ def grid_search(iris):
 
 def tuning_weight(clfs, X, y,voting='soft'):
     '''
-    currently only words for 3 classifiers
+    currently only works for 3 classifiers
     need to modify this. should do the prediction for each classifier once, then search for the best weights
     '''
     df = pd.DataFrame(columns=('w1', 'w2', 'w3', 'mean', 'std'))
@@ -327,4 +327,28 @@ class EnsembleClassifier(BaseEstimator, ClassifierMixin, TransformerMixin):
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
+
+    import ensemble.EnsembleClassifier,  ensemble.tuning_weight
+    print '\n\n ------ ensemble of different classifiers'
+    models = [ linear_model.SGDClassifier(loss="log",penalty="elasticnet")  # hinge does not have prob
+    , linear_model.LogisticRegression( tol= 0.001
+    ,C=10
+    ,class_weight= None)
+    , SVC(kernel="linear", C=1,probability=True)
+    #,MultinomialNB()
+    ]
+    print ensemble.tuning_weight(models, train_X, train_y)
+
+    eclf = EnsembleClassifier(clfs=models,
+     voting='soft', verbose=1
+     , weights=[1.5,1.0,2.5])
+    eclf = eclf.fit(train_X, train_y)
+
+    test_y_pred_e, test_y_pred_all, clf_names = eclf.predict_all_clfs(test_X)
+    print 'emsemble: ', accuracy_score(test_y, test_y_pred_e ) 
+    for i, test_y_pred in enumerate(test_y_pred_all) :
+        print clf_names[i], accuracy_score(test_y, test_y_pred )
+
+
+
 '''

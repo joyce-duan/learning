@@ -26,28 +26,53 @@ def plot_ybinary_xnumerical(df_X, y_binary, n_per_row=2, nbins = 20, figsize=(15
       nrows +=1
    i = 0
    fig1, ax = plt.subplots(nrows, n_per_row, figsize=figsize)
-   axs = ax.flatten()
-
+   if nrows == 1 and n_per_row == 1:
+       axs = [ax]
+   else:
+        axs = ax.flatten()
    df = pd.concat([df_X, y_binary], axis=1)
-
    for icol_x in xrange(len(cols)):
-            nbins_this =  nbins
+            #x_range = df[cols[icol_x]].max() - df[cols[icol_x]].max()
+            nbins_this =  min(nbins,df[cols[icol_x]].nunique())
+
+            n_decimal = 1
+            n_xtick_labels = min(5, nbins)
+            step = int(1.0 * nbins_this / n_xtick_labels)
 
             '''
             if df3[cols[i-1]].nunique() < nbins:
                 nbins_this = df3[cols[i-1]].nunique()
             '''
-            df['bins']=pd.cut(df[cols[icol_x]], nbins_this, labels=False)
-#              df3['bins']=pd.cut(df3[cols[i-1]], nbins_this)  
-            prob_den = pd.value_counts(df['bins'])#/n_datarows
+            df['bins'], bins =pd.cut(df[cols[icol_x]], nbins_this, labels=False, retbins=True)
 
+            x_plot =  bins[0:nbins_this] + (bins[2]-bins[1])/2
+            x_plot = [round(v, n_decimal) for v in x_plot]
+            x_tick_labels = [x if i % step == 0 else '' for i, x in enumerate(x_plot)]
+
+            prob_den = pd.value_counts(df['bins'])#/n_datarows
+            s_cnt = pd.Series([0] * nbins_this)
+            df_cnt = pd.concat([s_cnt, prob_den], axis = 1)
+            df_cnt.iloc[:,0] = df_cnt.apply(lambda x: x[0] if np.isnan(x[1]) else x[1], axis = 1)
+            prob_den = df_cnt.iloc[:, 0]
+            '''
+            print cols[icol_x], nbins_this
+            print prob_den.shape
+            print type(x_plot), len(x_plot)
+            '''
             ymean = df.groupby('bins')[yname].mean()
-            axs[icol_x].bar(prob_den.index, prob_den,color='lightgray')#,label='prob. density',color='lightgray' )
+            s_mean = pd.Series([0.0] * nbins_this)
+            df_tmp = pd.concat([s_mean, ymean], axis = 1)
+            df_tmp.iloc[:,0] = df_tmp.apply(lambda x: x[0] if np.isnan(x[1]) else x[1], axis = 1)
+            ymean = df_tmp.iloc[:, 0]
+            axs[icol_x].bar(prob_den.index, prob_den, color='steelblue') #color='lightgray')#,label='prob. density',color='lightgray' )
+
             ax2 = axs[icol_x].twinx()
 #              ax[irow,icol].plot( ymean, label = '%delinquency',color='r' )
-            ax2.plot(np.arange(0.5, len(ymean)+0.5), ymean, label = 'pct delinquency',color='r' )
+            ax2.plot(np.arange(len(ymean))+0.5, ymean, label = 'pct delinquency',color='r' )
             axs[icol_x].set_title(cols[icol_x])
-            #print df[cols[icol_x]].describe(), "\n","nbins ", nbins_this,"\n"
+
+            plt.xticks(np.arange(0.5, len(ymean)+0.5), x_tick_labels )
+            #plt.xticks(np.arange(len(ymean))+0.5)#, x_tick_labels )
             if icol_x == 0:
                  axs[icol_x].legend(loc='upper right')
                  axs[icol_x].set_ylabel('count', color='k')  # black

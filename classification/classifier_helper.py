@@ -52,7 +52,7 @@ import random
 import pprint
 import logging
 
-from model_evaluation.grid_search import score_grid_search
+from model_evaluation.grid_search import get_grid_search_score_df # score_grid_search
 
 # Display progress logs on stdout
 logging.basicConfig(level=logging.INFO,
@@ -81,6 +81,7 @@ class ClassifierTestor(object):
             , 'KNN':KNeighborsClassifier(11)
             ,'SVC_linear':SVC(kernel="linear", C=1)
             ,'SVC_rbf':SVC( kernel='rbf')
+            , 'SVC_poly':SVC(kernel='poly')
             , 'GaussianNB':GaussianNB()
             , 'GBC':GradientBoostingClassifier( ) # n_estimators = 500, learning_rate = 0.02) 
             ,'LDA':LDA()
@@ -147,7 +148,12 @@ class ClassifierTestor(object):
                     train_X_f = train_X
                     test_X_f = test_X
                 self.estimators[k]  = estimator.fit(train_X_f, train_y)
-                test_y_pred_prob = estimator.predict_proba(test_X_f)
+
+                if 'Classifier' in estimator.__class__.__name__:
+                    test_y_pred_prob = estimator.predict_proba(test_X_f)
+                else:
+                    test_y_pred_prob = np.zeros((len(test_y),2))               
+                    test_y_pred_prob[:,1] = estimator.predict(test_X_f).T
 
                 #metrics = [accuracy_score(test_y, test_y_pred) 
                 #,precision_score(test_y, test_y_pred) #, average='binary')
@@ -242,10 +248,11 @@ class ClassifierSelector(object):
         {'clf__C': [1, 10]  # default gamma is 0.0 then 1/n_features
         , 'clf__kernel': ['rbf']},
         {'clf__kernel': ['poly'], 'clf__degree': [ 2, 3]}
-        ], 
-    'rf': [{"clf__n_estimators": [100, 250]}], 
-    'knn': 
-        [{"clf__n_neighbors": [ 5, 10, 20]}]
+        ]
+    ,'rf': [{"clf__n_estimators": [100, 250]
+        , 'clf__max_depth':[20]
+        , 'clf__min_samples_leaf':[5]}]
+    ,'knn': [{"clf__n_neighbors": [ 5, 10, 20]}]
     , 'lr': [ {'clf__C': [1, 10, 100]} ]
     , 'gbc': [{'clf__learning_rate': [ 0.1] # default 0.1
             , 'clf__n_estimators': [100, 300] #default 100
@@ -377,7 +384,9 @@ class ClassifierOptimizer(object):
     , 'clf__kernel': ['rbf']},
     {'clf__kernel': ['poly'], 'clf__degree': [1, 2, 3, 4]}
     ], 
-    'rf': [{"clf__n_estimators": [250, 500, 1000]}], 
+    'rf': [{"clf__n_estimators": [100, 250]
+            , 'clf__max_depth':[20]
+        , 'clf__min_samples_leaf':[5] }], 
     'knn': [{"clf__n_neighbors": [1, 3, 5, 10, 20]}]
     , 'lr': [ {'clf__C': [0.0001, 0.001, 0.01, 0.5, 1, 10, 100, 1000],  # default: 1.0 inverse regularion strength
           'clf__class_weight': [None, 'auto'],
@@ -397,7 +406,7 @@ class ClassifierOptimizer(object):
     #dict_params = {'svm':{'classifier__C': [1, 10, 100, 1000], 'classifier__kernel': ['linear']}}
     def __init__(self, clfname):
         self.clfname= clfname
-        print ClassifierOptimizer.dict_params
+        #print ClassifierOptimizer.dict_params
         self.params = ClassifierOptimizer.dict_params[self.clfname]
         self.clf_func = ClassifierOptimizer.dict_model[self.clfname]
         self.parameters = None
@@ -407,6 +416,11 @@ class ClassifierOptimizer(object):
         return self.clf_func
 
     def set_params(self, params):
+        '''
+            - INPUT: list of hash 
+            params = [{"clf__n_estimators": [250] 
+            , 'clf__max_depth':[10, 20, 30]}]
+        '''
         self.params = params
 
     def add_pipleline(self,lst_pipeline = [], params = None ):
@@ -430,7 +444,7 @@ class ClassifierOptimizer(object):
             self.parameters = [ dict(d, **params) for d in self.params]
         print self.parameters
 
-    def optimize(self, train_txt,  train_y):    
+    def optimize(self, train_txt,  train_y, cv = 3, scoring = None):    
         '''
         train_txt: can be text if add_pipeline
         '''
@@ -451,12 +465,13 @@ class ClassifierOptimizer(object):
                 pnames[k] =1
         print pnames
 
-        self.grid_search = GridSearchCV(self.pipeline, self.parameters, n_jobs=-1, verbose=1)
+        self.grid_search = GridSearchCV(self.pipeline, self.parameters, n_jobs=2 \
+            , verbose=1, cv = cv, scoring = scoring)
 
         t0 = time.time()
         self.grid_search.fit(train_txt, train_y)
 
-        print("estimator Best score: %0.3f" % (self.grid_search.best_score_))
+        print("estimator Best score: %0.5f" % (self.grid_search.best_score_))
         print("Best parameters set:")
         best_parameters = self.grid_search.best_estimator_.get_params()
         #print best_parameters
@@ -469,8 +484,10 @@ class ClassifierOptimizer(object):
         print "finish in  %4.4fmin for %s " %((t1-t0)/60,'optimize')
         return self.grid_search
 
-    def get_score_cv(self):
-        self.df_score = score_grid_search(self.grid_search)
+    # def get_score(self):
+    def get_score_gridsearchcv(self):
+        #self.df_score = score_grid_search(self.grid_search)
+        self.df_score = get_grid_search_score_df(self.grid_search)
         return self.df_score
 
     def score_predict(self, test_txt, test_y):
