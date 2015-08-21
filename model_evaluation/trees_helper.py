@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-colors = [('#d7191c', '#2c7bb6'), ('#fdae61', '#abd9e9')] # (test, train)
+colors = [('#d7191c', '#2c7bb6'), ('#fdae61', '#abd9e9')] # [(test, train)]
+#train_color='#abd9e9', test_color='#fdae61' alpha=0.5
 def plot_staged_score(est, X_test, X_train, y_test, y_train, func_score, ax=None, label='', ylabel ='auc', train_color='#2c7bb6', test_color='#d7191c', alpha=1.0):
     """
      plot n_estimators vs. score  for ``est``, use ``X_test`` and ``y_test`` for test error. 
@@ -30,9 +31,7 @@ def plot_staged_score(est, X_test, X_train, y_test, y_train, func_score, ax=None
     ax.set_ylabel(ylabel)
     ax.set_xlabel('n_estimators')
     #ax.set_ylim((0.5, 1.05))
-    return test_score, ax
-
-   
+    return test_score, train_score, ax
 
 def plot_staged_score_rf(est, X_test, X_train, y_test, y_train, func_score, ax=None, label='', ylabel ='auc', train_color='#2c7bb6', test_color='#d7191c', alpha=1.0):
     """

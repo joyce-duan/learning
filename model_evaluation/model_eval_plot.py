@@ -5,6 +5,7 @@ from sklearn.metrics import roc_curve, auc
 from sklearn.cross_validation import StratifiedKFold
 
 from metrics_helper import get_confusion_rates
+from scipy import interp
 
 def plot_feature_importance_gbc(clf, feature_names, topk = 25, figsize = (50,70) ):
     #topk = 25
@@ -98,7 +99,10 @@ def plot_roc(y, y_pred_prob):
     roc_auc = auc(fpr, tpr)
     plt.plot(fpr, tpr, lw=1, label='ROC (area = %0.4f)' % ( roc_auc))    
 
-def plot_roc_cv(classifier, X, y, n_folds, cv):
+def plot_roc_cv(classifier, X, y, cv):
+    '''
+    cv = KFold(len(y),n_folds=5)
+    '''
     mean_tpr = 0.0
     mean_fpr = np.linspace(0, 1, 100)
     all_tpr = []

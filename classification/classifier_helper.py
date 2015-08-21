@@ -58,6 +58,74 @@ from model_evaluation.grid_search import get_grid_search_score_df # score_grid_s
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(levelname)s %(message)s')
 
+def baseline_model_gbc(df, xnames, yname):
+    clf = GradientBoostingClassifier()
+    m = cross_val_score(clf, df[xnames], df[yname], scoring = 'roc_auc', cv = 5)
+    print m.mean(), m
+
+def build_rfc():
+    d = {'min_samples_leaf': 7, 'min_samples_split': 3, 'criterion': 'entropy', 'max_features': 9, 'max_depth': 11, 'class_weight': {0: 1, 1: 1} }
+    clf = RandomForestClassifier(max_depth = 15, n_estimators = 250, min_samples_leaf =5 )
+    clf.set_params(**d)
+    return clf
+
+
+def calibrate_prob(y_true, y_score, bins=10, normalize=False):
+    '''
+    modified from http://jmetzen.github.io/2014-08-16/reliability-diagram.html
+
+    returns two arrays which encode a mapping from predicted probability to empirical probability.
+    For this, the predicted probabilities are partitioned into equally sized
+    bins and the mean predicted probability and the mean empirical probabilties
+    in the bins are computed. For perfectly calibrated predictions, both
+    quantities whould be approximately equal (for sufficiently many test
+    samples).
+
+    Note: this implementation is restricted to binary classification.
+
+    Parameters
+    ----------
+    y_true : array, shape = [n_samples]
+        True binary labels (0 or 1).
+    y_score : array, shape = [n_samples]
+        Target scores, can either be probability estimates of the positive
+        class or confidence values. If normalize is False, y_score must be in
+        the interval [0, 1]
+
+    bins : int, optional, default=10
+        The number of bins into which the y_scores are partitioned.
+        Note: n_samples should be considerably larger than bins such that
+              there is sufficient data in each bin to get a reliable estimate
+              of the reliability
+    normalize : bool, optional, default=False
+        Whether y_score needs to be normalized into the bin [0, 1]. If True,
+        the smallest value in y_score is mapped onto 0 and the largest one
+        onto 1.
+
+    -------
+    y_score_bin_mean : array, shape = [bins]
+        The mean predicted y_score in the respective bins.
+
+    empirical_prob_pos : array, shape = [bins]
+        The empirical probability (frequency) of the positive class (+1) in the
+        respective bins.
+    '''    
+    if normalize:  # Normalize scores into bin [0, 1]
+        y_score = (y_score - y_score.min()) / (y_score.max() - y_score.min())
+
+    bin_width = 1.0 / bins
+    bin_centers = np.linspace(0, 1.0 - bin_width, bins) + bin_width / 2
+
+    y_score_bin_mean = np.empty(bins)
+    empirical_prob_pos = np.empty(bins)
+    for i, threshold in enumerate(bin_centers):
+        # determine all samples where y_score falls into the i-th bin
+        bin_idx = np.logical_and(threshold - bin_width / 2 < y_score,
+            y_score <= threshold + bin_width / 2)
+        # Store mean y_score and mean empirical probability of positive class
+        y_score_bin_mean[i] = y_score[bin_idx].mean()
+        empirical_prob_pos[i] = y_true[bin_idx].mean()
+    return y_score_bin_mean, empirical_prob_pos
 
 class ClassifierTestor(object):
     '''
@@ -390,18 +458,28 @@ class ClassifierOptimizer(object):
     'knn': [{"clf__n_neighbors": [1, 3, 5, 10, 20]}]
     , 'lr': [ {'clf__C': [0.0001, 0.001, 0.01, 0.5, 1, 10, 100, 1000],  # default: 1.0 inverse regularion strength
           'clf__class_weight': [None, 'auto'],
-          'clf__tol': [ 1e-3, 1e-4, 1e-5, 1e-6]}]#, 1e-7] } ] # default 1e-4 0.0001
+          'clf__tol': [ 1e-3, 1e-4, 1e-5, 1e-6],#, 1e-7] } ] # default 1e-4 0.0001
+          'clf__penalty':['l2','l1']
+          }]
     , 'gbc': [{'clf__learning_rate': [0.8, 0.1, 0.05, 0.02, 0.01] # default 0.1
-        , 'clf__max_depth': [3,6]  #default 3
+        , 'clf__max_depth': [3,8]  #default 3; 2:main effect only; 3: 2 variable interaction; [4,8] typical case
         , 'clf__min_samples_leaf': [5, 10] #default 1
         , 'clf__max_features': [1.0, 0.3] #default None 1.0
         , 'clf__n_estimators': [300] #default 100
         }]
-    , 'sgdc':[{'clf__loss':['log'],'clf__penalty':["elasticnet"]
-        , 'clf__shuffle':[True]
-        , 'clf__alpha':[0.001, 0.0001, 0.00001]
-        ,  'clf__n_iter':[20,200]}]
+    , 'sgdc':[{'clf__loss':['log'] # logistic regression
+        ,'clf__penalty':["elasticnet"]  #default l2  none, l2, l1, or elasticnet
+        , 'clf__shuffle':[True]  #default True
+        , 'clf__alpha':[0.001, 0.0001, 0.00001]  # default 0.0001
+        ,  'clf__n_iter':[5, 8]}]  # no. of passes over the data The number of iterations is set to 1 if using partial_fit. Defaults to 5. optimal:  n_iter = np.ceil(10**6 / n) n=size of training set
     }    
+    '''
+    SGDClassifier
+    params_grid = {"clf__n_iter": [5, 8, 10, 15],
+              "clf__alpha": [1e-7, 1e-6, 1e-5, 0.0001, 0.001, 0.01, 0.1, 1],
+              "clf__penalty": ["none", "l1", "l2"],
+              'clf__loss': ['log']}
+    '''
 
     #dict_params = {'svm':{'classifier__C': [1, 10, 100, 1000], 'classifier__kernel': ['linear']}}
     def __init__(self, clfname):
@@ -425,13 +503,14 @@ class ClassifierOptimizer(object):
 
     def add_pipleline(self,lst_pipeline = [], params = None ):
         ''' 
-        pipeline = Pipeline([
-        ('vect', CountVectorizer(stop_words = 'english', analyzer = analyzer11)),
-        ('tfidf', TfidfTransformer()),
-        ('chi2', SelectKBest(chi2)),
-        ('clf', self.get_clf())
-        ])   
-        par_chi2 = {'chi2__k': [800, 1000, 1200, 1400, 1600, 1800, 2000]}
+        #run set_params before add_pipeline
+        params_grid = [{
+              "clf__penalty": ["none", "l1", "l2"],
+              'clf__loss': ['log']}]              
+        optmizer = ClassifierOptimizer('sgdc') # linear_model.SGDClassifier(loss='log') 
+        optmizer.set_params(params_grid)
+        optmizer.add_pipleline([("scalar",  StandardScaler())])
+
         '''
         self.pipeline = Pipeline(
             lst_pipeline + 
@@ -444,7 +523,7 @@ class ClassifierOptimizer(object):
             self.parameters = [ dict(d, **params) for d in self.params]
         print self.parameters
 
-    def optimize(self, train_txt,  train_y, cv = 3, scoring = None):    
+    def optimize(self, train_txt,  train_y, cv = 3, scoring = None, n_jobs = 1):    
         '''
         train_txt: can be text if add_pipeline
         '''
@@ -463,9 +542,9 @@ class ClassifierOptimizer(object):
         for p in self.parameters:
             for k in p:
                 pnames[k] =1
-        print pnames
+        print 'parameters to optimize: ', pnames.keys()
 
-        self.grid_search = GridSearchCV(self.pipeline, self.parameters, n_jobs=2 \
+        self.grid_search = GridSearchCV(self.pipeline, self.parameters, n_jobs=n_jobs \
             , verbose=1, cv = cv, scoring = scoring)
 
         t0 = time.time()
